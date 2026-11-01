@@ -1,0 +1,24 @@
+{
+  "name": "godot-taptap-minigame",
+  "version": "0.1.0",
+  "description": "Convert a Godot 4 Web export into an uploadable TapTap mini-game package",
+  "bin": {
+    "godot-taptap-minigame": "tools/build.js"
+  },
+  "scripts": {
+    "build": "node tools/build.js",
+    "smoke": "node tools/smoke.js"
+  },
+  "keywords": [
+    "godot",
+    "taptap",
+    "minigame",
+    "webassembly",
+    "adapter",
+    "html5"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=16"
+  }
+}
