@@ -150,6 +150,23 @@ Godot 的 `index.wasm` 是**未压缩**的（Web 服务器靠 gzip/brotli 传输
 
 ---
 
+## 🔴 为什么把所有代码内联成一个 game.js
+
+最初的做法是 `game.js` 里 `require("./tap-adapter.js")` + `require("./engine.js")`。
+**真机自测直接「启动失败」** —— 因为 TapTap 小游戏 VM 不是 CommonJS 环境，官方文档只承诺
+「绑定了一些方法的 JavaScript VM」，从未承诺 `require` / `module` / `exports`。
+
+现在的做法：打包器把**适配层 + Godot 引擎胶水层 + 启动逻辑**拼成**单个 `game.js`**，
+包内只有 game.js / game.json / project.config.json / wasm / pck。
+
+三条硬约束：
+
+1. **不能包 IIFE**。Emscripten 的 `const Engine = ...` 与 `var _scriptName` 必须在同一顶层作用域，
+   包起来会让引擎内部的声明互相不可见。
+2. **顺序不可换**。`engine.js` 第一行就是 `globalThis.document?.currentScript?.src`，
+   在**加载时**（不是运行时）就访问 document —— 适配层必须靠前。
+3. **适配层不能有 import/export**。它是纯顶层语句，直接拼进去即可。
+
 ## 限制（先看清楚再动手）
 
 1. **不支持多线程**。小游戏 VM 没有 `SharedArrayBuffer` 那套。必须用

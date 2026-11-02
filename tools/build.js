@@ -95,31 +95,35 @@ function godotConfigFromHtml(htmlPath) {
 function writeExports(ctx, webDir, outDir, opts) {
 	const cfg = godotConfigFromHtml(path.join(webDir, "index.html"));
 
-	// engine.js = index.js 改名；fileName 指向它自己会很怪，所以把配置里的路径都改成包内相对名
-	fs.copyFileSync(path.join(webDir, "index.js"), path.join(outDir, "engine.js"));
 	fs.copyFileSync(path.join(webDir, "index.wasm"), path.join(outDir, "index.wasm"));
 	fs.copyFileSync(path.join(webDir, "index.pck"), path.join(outDir, "index.pck"));
 
-	// Godot 的音频 worklet 是可选的：小游戏 AudioWorklet 不一定可用，带上无害（引擎会探测）。
+	// 音频 worklet：小游戏 AudioWorklet 不一定可用，带上无害（引擎自己会探测）
 	for (const f of ["index.audio.worklet.js", "index.audio.position.worklet.js"]) {
 		const src = path.join(webDir, f);
 		if (fs.existsSync(src)) fs.copyFileSync(src, path.join(outDir, f));
 	}
-	// 启动图：改成可选，缺了不致命
 	const png = path.join(webDir, "index.png");
 	if (fs.existsSync(png)) fs.copyFileSync(png, path.join(outDir, "index.png"));
 
-	const tmpl = fs.readFileSync(path.join(__dirname, "..", "runtime", "game.js.tmpl"), "utf8");
-	const gameJs = tmpl.replace("__GODOT_CONFIG__", JSON.stringify(cfg, null, 0));
+	// 🔴 关键：把 适配层 + 引擎 + 启动 内联成**单个 game.js**。
+	// 不用 require/import —— 小游戏 VM 不是 CommonJS 环境，require 会直接 ReferenceError。
+	// 三段必须是顶层代码拼在一起，不能包 IIFE：engine 内部的 var/const 要共享同一作用域。
+	const adapter = fs.readFileSync(path.join(__dirname, "..", "runtime", "tap-adapter.js"), "utf8");
+	const engine = fs.readFileSync(path.join(webDir, "index.js"), "utf8");
+	const tmpl = fs.readFileSync(path.join(__dirname, "..", "runtime", "game.js.inline.tmpl"), "utf8");
+
+	// 用函数式替换，避免 $& / $1 这类替换串转义问题（引擎压缩码里满是 $）
+	const gameJs = tmpl
+		.replace("__ADAPTER__", function () { return adapter; })
+		.replace("__ENGINE__", function () { return engine; })
+		.replace("__GODOT_CONFIG__", function () { return JSON.stringify(cfg); });
 	fs.writeFileSync(path.join(outDir, "game.js"), gameJs, "utf8");
 
 	const gameJson = { deviceOrientation: opts.orientation === "portrait" ? "portrait" : "landscape" };
 	fs.writeFileSync(path.join(outDir, "game.json"), JSON.stringify(gameJson, null, 2) + "\n", "utf8");
 
-	const projectConfig = {
-		description: opts.name || "Godot Game",
-		setting: { es6: true },
-	};
+	const projectConfig = { description: opts.name || "Godot Game", setting: { es6: true } };
 	fs.writeFileSync(path.join(outDir, "project.config.json"), JSON.stringify(projectConfig, null, 2) + "\n", "utf8");
 
 	return cfg;
@@ -243,11 +247,6 @@ function main() {
 		// 只算压缩后体积，不写文件
 		const dir = fs.mkdtempSync(path.join(require("os").tmpdir(), "mgscan-"));
 		writeExports({}, args.web, dir, args);
-		for (const f of ["game.js", "game.json", "project.config.json"]) {
-			const src = path.join(__dirname, "..", "runtime", "tap-adapter.js");
-			if (fs.existsSync(src)) fs.copyFileSync(src, path.join(dir, f + ".adapter"));
-		}
-		fs.copyFileSync(path.join(__dirname, "..", "runtime", "tap-adapter.js"), path.join(dir, "tap-adapter.js"));
 		const z = makeZip(dir);
 		log("  压缩后: " + human(z.buffer.length) + (z.buffer.length > LIMIT_FIRST_PACK ? c.r("  ✗ 超 60M") :
 			(z.buffer.length > LIMIT_GOOD ? c.y("  ⚠ 未进优秀线(20M)") : c.g("  ✓ 优秀"))));
@@ -259,8 +258,6 @@ function main() {
 	if (args.zip) {
 		const scratch = fs.mkdtempSync(path.join(require("os").tmpdir(), "mgbuild-"));
 		writeExports({}, args.web, scratch, args);
-		// 适配层进包（必须在 game.js 之前被 require，靠 require 顺序保证，不是靠文件名前缀）
-		fs.copyFileSync(path.join(__dirname, "..", "runtime", "tap-adapter.js"), path.join(scratch, "tap-adapter.js"));
 		const z = makeZip(scratch);
 		fs.mkdirSync(path.dirname(outDir), { recursive: true });
 		fs.writeFileSync(outDir, z.buffer);
@@ -277,7 +274,6 @@ function main() {
 	} else {
 		fs.mkdirSync(outDir, { recursive: true });
 		writeExports({}, args.web, outDir, args);
-		fs.copyFileSync(path.join(__dirname, "..", "runtime", "tap-adapter.js"), path.join(outDir, "tap-adapter.js"));
 		log("\n=== 输出目录（可直接用平台自测）===\n  " + path.resolve(outDir));
 	}
 }

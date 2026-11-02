@@ -1,0 +1,48 @@
+/**
+ * game.js —— TapTap 小游戏入口（内联版）
+ *
+ * 🔴 为什么不用 require：TapTap 小游戏 VM 不是 CommonJS 环境（官方文档只说明
+ * 「绑定了一些方法的 JavaScript VM」，从未承诺 module/require/exports）。
+ * 一旦 VM 里没有 require，入口第一行就抛 ReferenceError —— 表现就是「启动失败」。
+ * 所以整个包只执行 game.js 一个脚本，三段代码按顺序内联：
+ *   ① 适配层（造 DOM 假面，必须在 engine 之前）
+ *   ② 引擎胶水层（Emscripten，**加载时**就会访问 globalThis.document）
+ *   ③ 启动逻辑
+ *
+ * 另一个硬约束：三个片段都必须是**顶层代码**，不能包进 IIFE ——
+ * Emscripten 的 `const Engine = ...` 与 `var _scriptName` 需要留在同一个作用域，
+ * 包起来会让 engine 内部的 var 声明互相不可见。
+ */
+
+/* ==================== ① 适配层 ==================== */
+__ADAPTER__
+
+/* ==================== ② 引擎胶水层 ==================== */
+__ENGINE__
+
+/* ==================== ③ 启动 ==================== */
+(function () {
+	var cfg = __GODOT_CONFIG__;
+	// 引擎在脚本末尾把自己挂到 window 上；小游戏里 window 由适配层指向全局。
+	var EngineRef = (typeof Engine !== 'undefined' && Engine) || (globalThis && globalThis.Engine) || (window && window.Engine);
+	if (!EngineRef) {
+		console.error('[tap-minigame] Engine 未挂载，检查适配层是否在引擎之前执行');
+		return;
+	}
+
+	var engine = new EngineRef(cfg);
+	engine.startGame({
+		onProgress: function (current, total) {
+			if (total > 0) console.log('[tap-minigame] loading ' + Math.round(current / total * 100) + '%');
+		},
+	}).then(function () {
+		console.log('[tap-minigame] started');
+	}, function (err) {
+		console.error('[tap-minigame] start failed:', err);
+		try {
+			if (typeof tap !== 'undefined' && tap.showToast) {
+				tap.showToast({ title: '启动失败：' + String((err && err.message) || err), duration: 3000 });
+			}
+		} catch (e) {}
+	});
+})();
